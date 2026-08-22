@@ -22,20 +22,8 @@
 
 ## 一键安装
 
-仓库为私有，先选一种方式把代码放到服务器上：
-
 ```bash
-# 方式一：本机配置过 GitHub CLI (gh auth login) 后直接克隆上传，
-#         或在服务器上用 gh：
-gh repo clone <你的用户名>/emby-proxy-go-deploy
-
-# 方式二：用 Personal Access Token (需要 repo 权限)
-git clone https://<TOKEN>@github.com/<你的用户名>/emby-proxy-go-deploy.git
-```
-
-然后运行安装脚本：
-
-```bash
+git clone https://github.com/2020743996/emby-proxy-go-deploy.git
 cd emby-proxy-go-deploy
 
 # 全程交互式(会询问是否绑定域名)
@@ -101,3 +89,7 @@ sudo bash uninstall.sh   # 卸载(保留证书, 程序与配置自动备份)
 ## 致谢
 
 核心程序：[Gsy-allen/emby-reverse-proxy-go](https://github.com/Gsy-allen/emby-reverse-proxy-go)
+
+## 许可证
+
+[MIT](LICENSE)
