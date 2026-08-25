@@ -62,7 +62,7 @@ svc_logs() { journalctl -u "$SERVICE" -n 100 --no-pager; }
 svc_tailf() { echo "实时日志中，按 Ctrl+C 返回..."; journalctl -u "$SERVICE" -f --no-pager; }
 
 edit_config() {
-    ${EDITOR:-nano} "$ENV_FILE"
+    ${EDITOR:-vi} "$ENV_FILE"
     echo ""
     if confirm "配置可能已修改，是否立即重启服务使其生效?"; then svc_restart; svc_status; fi
 }
@@ -173,6 +173,24 @@ do_uninstall() {
     msg_ok "已卸载，备份目录见 $BASE_DIR.bak.*"
 }
 
+cert_status() {
+    command -v certbot >/dev/null 2>&1 || { msg_err "未安装 certbot(纯 HTTP 模式没有证书)"; return 1; }
+    echo -e "${C_B}===== 现有证书 =====${C_N}"
+    if ! certbot certificates 2>/dev/null | grep -q "Certificate Name"; then
+        msg_warn "暂无证书"
+        return 0
+    fi
+    certbot certificates 2>/dev/null | grep -E "Certificate Name|Domains:|Expiry Date|Renewal" | sed 's/^ */  /'
+    echo ""
+    echo "执行续期演练 (certbot renew --dry-run，不会实际改动)..."
+    if certbot renew --dry-run >/dev/null 2>&1; then
+        msg_ok "续期演练通过，自动续期(certbot.timer)状态正常"
+    else
+        msg_err "续期演练失败，输出如下："
+        certbot renew --dry-run 2>&1 | tail -15
+    fi
+}
+
 show_usage() {
     cat <<EOF
 
@@ -202,7 +220,8 @@ EOF
 
 show_menu() {
     clear 2>/dev/null
-    local running="$(systemctl is-active $SERVICE 2>/dev/null)"
+    local running st
+    running=$(systemctl is-active $SERVICE 2>/dev/null)
     [ "$running" = "active" ] && st="${C_G}运行中${C_N}" || st="${C_R}${running:-unknown}${C_N}"
     echo -e "${C_B}==============================================${C_N}"
     echo -e "${C_B}      emby-reverse-proxy-go 管理脚本${C_N}"
@@ -213,8 +232,8 @@ show_menu() {
     echo -e "  4) 运行状态/健康检查 5) 实时日志         6) 最近100行日志"
     echo -e "  7) 编辑配置文件      8) 查看当前配置     9) 设置出站代理(ALL_PROXY)"
     echo -e " 10) 切换是否禁止内网上游                  11) 测试反代某上游 Emby"
-    echo -e " 12) 更新程序(git pull+编译+重启)          13) 使用说明"
-    echo -e " 14) 卸载               0) 退出"
+    echo -e " 12) 更新程序(git pull+编译+重启)          13) 证书状态/续期测试"
+    echo -e " 14) 使用说明             15) 卸载            0) 退出"
     echo -e "${C_B}----------------------------------------------${C_N}"
 }
 
@@ -235,8 +254,9 @@ menu_loop() {
             10) toggle_private_targets ;;
             11) test_upstream ;;
             12) do_update ;;
-            13) show_usage ;;
-            14) do_uninstall ;;
+            13) cert_status ;;
+            14) show_usage ;;
+            15) do_uninstall ;;
             0) exit 0 ;;
             *) msg_warn "无效选择" ;;
         esac
@@ -255,7 +275,8 @@ case "$1" in
     config)   show_config ;;
     test)     test_upstream ;;
     update)   do_update ;;
+    cert)     cert_status ;;
     usage)    show_usage ;;
     "")       menu_loop ;;
-    *)        echo "用法: emby [start|stop|restart|status|logs|tailf|config|test|update|usage]"; exit 1 ;;
+    *)        echo "用法: emby [start|stop|restart|status|logs|tailf|config|test|update|cert|usage]"; exit 1 ;;
 esac

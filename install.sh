@@ -35,7 +35,25 @@ warn() { echo -e "${C_Y}[提示]${C_N} $*"; }
 err()  { echo -e "${C_R}[失败]${C_N} $*"; }
 
 usage() {
-    sed -n '2,20p' "$0" | sed 's/^#//;s/^ //'
+    cat <<'EOF'
+用法:
+    bash install.sh                          # 全程交互式
+    bash install.sh --domain emby.example.com
+    bash install.sh --domain emby.example.com --email me@example.com -y
+    bash install.sh --no-domain -y           # 不用域名，纯 HTTP(IP 访问)
+
+可选参数:
+    -d, --domain <域名>   绑定域名并自动申请 HTTPS 证书 (需解析到本机)
+        --email <邮箱>    Let's Encrypt 联系邮箱 (默认 admin@<域名>)
+    -p, --port <端口>     反代监听端口 (默认 8080)
+    -y, --yes             跳过所有交互确认
+        --no-domain       明确不使用域名 (纯 HTTP)
+    -h, --help            显示本帮助
+
+可选环境变量:
+    BACKEND_PORT=8080     反代监听端口
+    GOPROXY_URL=...       Go 模块代理 (默认 https://goproxy.cn,direct)
+EOF
     exit 0
 }
 
@@ -72,7 +90,7 @@ public_ips() {
     local ips="" a
     a=$(curl -s -m 8 -4 https://api.ipify.org 2>/dev/null) && [ -n "$a" ] && ips="$ips $a"
     a=$(curl -s -m 8 -6 https://api64.ipify.org 2>/dev/null) && [ -n "$a" ] && ips="$ips $a"
-    for a in $ips; do echo "${a// /}"; done | sort -u | tr '\n' ' '
+    echo "$ips" | tr ' ' '\n' | sort -u | tr '\n' ' '
 }
 
 echo -e "${C_B}==============================================${C_N}"
@@ -154,8 +172,10 @@ ok "Go $(go version | awk '{print $3}')"
 # ---------- 3/7 上游源码 ----------
 echo "== 3/7 获取上游源码 =="
 mkdir -p "$BASE"
+HEAD_BEFORE=""
 if [ -d "$SRC/.git" ]; then
     git config --global --add safe.directory "$SRC" 2>/dev/null || true
+    HEAD_BEFORE=$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)
     git -C "$SRC" pull --rebase --autostash >/dev/null 2>&1 && ok "源码已更新" || warn "源码更新失败，使用现有版本继续"
 else
     rm -rf "$SRC"
@@ -164,12 +184,17 @@ else
 fi
 
 # ---------- 4/7 编译 ----------
-echo "== 4/7 编译 emby-proxy =="
-cd "$SRC"
-GOPROXY="$GOPROXY_URL" go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$BASE/emby-proxy.new" .
-mv "$BASE/emby-proxy.new" "$BASE/emby-proxy"
-chmod +x "$BASE/emby-proxy"
-ok "编译完成: $(ls -lh "$BASE/emby-proxy" | awk '{print $5}')"
+if [ -x "$BASE/emby-proxy" ] && [ -n "$HEAD_BEFORE" ] \
+   && [ "$HEAD_BEFORE" = "$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" ]; then
+    ok "代码无更新，跳过编译"
+else
+    echo "== 4/7 编译 emby-proxy =="
+    cd "$SRC"
+    GOPROXY="$GOPROXY_URL" go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$BASE/emby-proxy.new" .
+    mv "$BASE/emby-proxy.new" "$BASE/emby-proxy"
+    chmod +x "$BASE/emby-proxy"
+    ok "编译完成: $(ls -lh "$BASE/emby-proxy" | awk '{print $5}')"
+fi
 
 # ---------- 5/7 配置与 systemd 服务 ----------
 echo "== 5/7 写入配置并注册 systemd 服务 =="
@@ -197,7 +222,6 @@ elif [ -z "$DOMAIN" ]; then
     USE_HTTPS=0
 fi
 
-NGINX_CONF_SRC=""
 ENTRANCE=""
 if [ -n "$DOMAIN" ]; then
     echo "== 6/7 域名 $DOMAIN 与 HTTPS 证书 =="
@@ -244,13 +268,14 @@ if [ -n "$DOMAIN" ]; then
     printf '#!/bin/bash\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
     chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
     sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s/__BACKEND_PORT__/$BACKEND_PORT/g" \
-        "$SCRIPT_DIR/deploy/nginx-https.conf.template" > "$SCRIPT_DIR/deploy/.emby-proxy.nginx.conf"
+        "$SCRIPT_DIR/deploy/nginx-https.conf.template" > /tmp/emby-proxy.nginx.conf
     ENTRANCE="https://$DOMAIN"
     USE_HTTPS=1
 else
     sed "s/__BACKEND_PORT__/$BACKEND_PORT/g" \
-        "$SCRIPT_DIR/deploy/nginx-http.conf.template" > "$SCRIPT_DIR/deploy/.emby-proxy.nginx.conf"
-    MY_IP=$(public_ip); ENTRANCE="http://${MY_IP:-本机IP}:80"
+        "$SCRIPT_DIR/deploy/nginx-http.conf.template" > /tmp/emby-proxy.nginx.conf
+    MY_IP=$(public_ip); [ -z "$MY_IP" ] && MY_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    ENTRANCE="http://${MY_IP:-SERVER_IP}:80"
     warn "纯 HTTP 模式, 入口: $ENTRANCE (之后想加域名可重新运行本脚本)"
 fi
 
@@ -260,8 +285,8 @@ if [ -f /etc/nginx/sites-available/default ] && [ ! -f /etc/nginx/sites-availabl
     cp -a /etc/nginx/sites-available/default /etc/nginx/sites-available/default.bak.emby-install
     warn "原默认站点已备份为 default.bak.emby-install"
 fi
-cp "$SCRIPT_DIR/deploy/.emby-proxy.nginx.conf" /etc/nginx/sites-available/emby-proxy
-rm -f "$SCRIPT_DIR/deploy/.emby-proxy.nginx.conf"
+cp /tmp/emby-proxy.nginx.conf /etc/nginx/sites-available/emby-proxy
+rm -f /tmp/emby-proxy.nginx.conf
 rm -f /etc/nginx/conf.d/ws-map.conf   # 清理旧版部署残留(map 已内联到站点文件)
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/emby-proxy
 ln -sf /etc/nginx/sites-available/emby-proxy /etc/nginx/sites-enabled/emby-proxy
