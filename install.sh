@@ -5,7 +5,6 @@ set -euo pipefail
 
 BASE="/opt/emby-reverse-proxy-go"; SRC="$BASE/src"
 BACKEND_PORT="${BACKEND_PORT:-8080}"
-UPSTREAM_REPO="https://github.com/Gsy-allen/emby-reverse-proxy-go"
 GOPROXY_URL="${GOPROXY_URL:-https://goproxy.cn,direct}"
 GO_MIRROR="https://mirrors.aliyun.com/golang"
 DOMAIN=""; EMAIL=""; ASSUME_YES=0
@@ -79,19 +78,45 @@ fi
 export PATH="/usr/local/go/bin:$PATH"; ok "Go $(go version | awk '{print $3}')"
 
 echo -e "${C_B}== 获取上游源码并编译 (无更新则跳过) ==${C_N}"
-mkdir -p "$BASE"; B4=""
+mkdir -p "$BASE"; TH=""
+# 上游源码地址链: 直连优先,失败走国内加速镜像
+SRC_URLS="https://codeload.github.com/Gsy-allen/emby-reverse-proxy-go/tar.gz/refs/heads/master
+https://ghfast.top/https://codeload.github.com/Gsy-allen/emby-reverse-proxy-go/tar.gz/refs/heads/master
+https://gh-proxy.com/https://codeload.github.com/Gsy-allen/emby-reverse-proxy-go/tar.gz/refs/heads/master"
+fetch_upstream() {
+    local u
+    rm -f /tmp/upstream-src.tgz
+    for u in $SRC_URLS; do
+        curl -fsSL -m 120 --connect-timeout 8 -o /tmp/upstream-src.tgz "$u" 2>/dev/null && [ -s /tmp/upstream-src.tgz ] && return 0
+        warn "源获取失败, 换下一个: $u"
+    done
+    return 1
+}
 if [ -d "$SRC/.git" ]; then
     git config --global --add safe.directory "$SRC" 2>/dev/null || true
-    B4=$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)
-    git -C "$SRC" pull --rebase --autostash >/dev/null 2>&1 || warn "源码更新失败, 使用现有版本继续"
-else
-    git clone --depth 1 "$UPSTREAM_REPO" "$SRC"
+    git -C "$SRC" pull --rebase --autostash >/dev/null 2>&1 || warn "git 更新失败, 尝试镜像下载"
 fi
-if [ ! -x "$BASE/emby-proxy" ] || [ "${B4:-x}" != "$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" ]; then
+if ! git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
+    # 无 git 仓库(镜像 tarball 模式)：始终取最新版, 下载失败时回退本地已有源码
+    if fetch_upstream; then
+        rm -rf "$SRC"; mkdir -p "$SRC"
+        tar -xzf /tmp/upstream-src.tgz -C "$SRC" --strip-components=1
+        ok "源码已就位"
+    elif [ -f "$SRC/handler.go" ]; then
+        warn "上游下载失败, 使用本地已有源码继续"
+    else
+        err "上游源码所有渠道均失败 —— 可手动下载解压到 $SRC 后重跑本脚本"; exit 1
+    fi
+fi
+TH=$(cd "$SRC" && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | awk '{print $1}')
+if [ -x "$BASE/emby-proxy" ] && [ "$TH" = "$(cat "$BASE/.src_hash" 2>/dev/null || echo none)" ]; then
+    ok "代码无更新，跳过编译"
+else
     (cd "$SRC" && GOPROXY="$GOPROXY_URL" go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$BASE/emby-proxy.new" .)
     mv "$BASE/emby-proxy.new" "$BASE/emby-proxy" && chmod +x "$BASE/emby-proxy"
+    echo "$TH" > "$BASE/.src_hash"
+    ok "编译完成 ($(ls -lh "$BASE/emby-proxy" | awk '{print $5}'))"
 fi
-ok "程序就绪 ($(ls -lh "$BASE/emby-proxy" | awk '{print $5}'))"
 
 echo -e "${C_B}== 写入配置并启动 systemd 服务 ==${C_N}"
 sed "s/__BACKEND_PORT__/$BACKEND_PORT/g" "$SCRIPT_DIR/deploy/emby-proxy.env.template" > "$BASE/emby-proxy.env"

@@ -139,13 +139,26 @@ do_update() {
     export PATH="/usr/local/go/bin:$PATH"
     export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
     command -v go >/dev/null || { msg_err "未找到 go，无法在服务器上编译更新"; return 1; }
-    echo -e "当前版本: $(cd "$SRC_DIR" && git rev-parse --short HEAD 2>/dev/null) ($(cd "$SRC_DIR" && git log -1 --format=%cs 2>/dev/null))"
     cd "$SRC_DIR" || return 1
-    echo "正在拉取最新代码..."
-    if ! git pull --rebase --autostash 2>&1; then
-        msg_err "git pull 失败(服务器可能无法访问 GitHub)"
-        msg_warn "备选：本地构建二进制后上传覆盖 $BIN 再重启"
-        return 1
+    if [ -d .git ]; then
+        echo "正在拉取最新代码..."
+        git pull --rebase --autostash >/dev/null 2>&1 || msg_warn "git 拉取失败, 改用镜像下载"
+    fi
+    if ! git rev-parse HEAD >/dev/null 2>&1; then
+        echo "正在通过镜像链获取最新源码..."
+        local dl=1 u
+        for u in \
+            "https://codeload.github.com/Gsy-allen/emby-reverse-proxy-go/tar.gz/refs/heads/master" \
+            "https://ghfast.top/https://codeload.github.com/Gsy-allen/emby-reverse-proxy-go/tar.gz/refs/heads/master" \
+            "https://gh-proxy.com/https://codeload.github.com/Gsy-allen/emby-reverse-proxy-go/tar.gz/refs/heads/master"; do
+            curl -fsSL -m 120 --connect-timeout 8 -o /tmp/upstream-src.tgz "$u" 2>/dev/null && [ -s /tmp/upstream-src.tgz ] && { dl=0; break; }
+        done
+        if [ "$dl" != 0 ]; then
+            msg_err "所有渠道均失败 —— 可手动下载源码解压到 $SRC_DIR 后重试"
+            return 1
+        fi
+        find . -mindepth 1 -not -path "./.git*" -exec rm -rf {} + 2>/dev/null || true
+        tar -xzf /tmp/upstream-src.tgz --strip-components=1
     fi
     echo "正在编译..."
     if go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$BIN.new" . ; then
@@ -153,7 +166,7 @@ do_update() {
         mv "$BIN.new" "$BIN"
         chmod +x "$BIN"
         svc_restart
-        msg_ok "更新完成: $(git rev-parse --short HEAD)"
+        msg_ok "更新完成"
     else
         msg_err "编译失败，保留旧版本"
         rm -f "$BIN.new"
