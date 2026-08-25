@@ -67,6 +67,14 @@ public_ip() {
         || hostname -I | awk '{print $1}'
 }
 
+# 检测本机全部公网地址(IPv4 + IPv6)，空格分隔
+public_ips() {
+    local ips="" a
+    a=$(curl -s -m 8 -4 https://api.ipify.org 2>/dev/null) && [ -n "$a" ] && ips="$ips $a"
+    a=$(curl -s -m 8 -6 https://api64.ipify.org 2>/dev/null) && [ -n "$a" ] && ips="$ips $a"
+    for a in $ips; do echo "${a// /}"; done | sort -u | tr '\n' ' '
+}
+
 echo -e "${C_B}==============================================${C_N}"
 echo -e "${C_B}   emby-reverse-proxy-go 一键安装${C_N}"
 echo -e "${C_B}==============================================${C_N}"
@@ -193,12 +201,20 @@ NGINX_CONF_SRC=""
 ENTRANCE=""
 if [ -n "$DOMAIN" ]; then
     echo "== 6/7 域名 $DOMAIN 与 HTTPS 证书 =="
-    MY_IP=$(public_ip); [ -z "$MY_IP" ] && MY_IP="未知"
+    MY_LIST=$(public_ips); [ -z "${MY_LIST// /}" ] && MY_LIST="$(public_ip) "
     RESOLVED=$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')
-    if echo " $RESOLVED " | grep -q " $MY_IP "; then
-        ok "DNS 解析正常: $DOMAIN -> $MY_IP"
+    MATCHED=""
+    for r in $RESOLVED; do
+        for m in $MY_LIST; do
+            [ "$r" = "$m" ] && MATCHED="$r"
+        done
+    done
+    if [ -n "$MATCHED" ]; then
+        ok "DNS 解析正常: $DOMAIN -> 已匹配本机地址 ($MATCHED)"
+        [ -n "$(echo "$RESOLVED" | grep ':')" ] && [ -z "$(echo "$MY_LIST" | grep ':')" ] && \
+            warn "域名含 AAAA(IPv6) 记录，但本机似乎没有可用的 IPv6 出口 —— 建议删除 AAAA 记录或开通 IPv6，否则部分客户端会解析到 v6 而连不上"
     else
-        warn "域名解析 [$RESOLVED] 与本机公网IP [$MY_IP] 不一致或不存在的迹象"
+        warn "域名解析 [$RESOLVED] 与本机公网地址 [${MY_LIST}] 不一致"
         warn "若 DNS 尚未生效, Let's Encrypt HTTP 验证会失败"
         confirm "仍要继续尝试申请证书吗?" || { warn "已跳过 HTTPS, 将以纯 HTTP 模式安装"; DOMAIN=""; }
     fi
