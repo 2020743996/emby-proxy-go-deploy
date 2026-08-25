@@ -24,9 +24,22 @@
 
 ## 一键安装
 
+**方式一：不需要 git（推荐，全新机器直接粘贴）**
+
+```bash
+apt-get update && apt-get install -y curl && \
+curl -fsSL https://github.com/2020743996/emby-proxy-go-deploy/archive/refs/heads/main.tar.gz | tar -xz && \
+cd emby-proxy-go-deploy-main
+```
+
+**方式二：git clone**
+
 ```bash
 git clone https://github.com/2020743996/emby-proxy-go-deploy.git
 cd emby-proxy-go-deploy
+```
+
+然后运行安装脚本：
 
 # 全程交互式(会询问是否绑定域名)
 sudo bash install.sh
