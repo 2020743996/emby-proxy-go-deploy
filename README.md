@@ -45,10 +45,10 @@ cd emby-proxy-go-deploy
 sudo bash install.sh
 
 # 指定域名 + HTTPS(推荐, 先确保域名 A 记录已指向服务器)
-sudo bash install.sh --domain emby.example.com --email me@example.com
+sudo bash install.sh -d emby.example.com --email me@example.com
 
 # 不用域名，纯 HTTP 用 IP 访问
-sudo bash install.sh --no-domain -y
+sudo bash install.sh -y
 
 # 自定义后端端口
 sudo BACKEND_PORT=9090 bash install.sh -y
@@ -99,7 +99,7 @@ sudo bash uninstall.sh   # 卸载(保留证书, 程序与配置自动备份)
 
 - **证书申请失败**：检查域名解析是否指向本机、安全组是否放行 80；修好后重跑 `install.sh` 即可（幂等，可反复执行）。
 - **上游是内网 Emby**：编辑 `/opt/emby-reverse-proxy-go/emby-proxy.env` 把 `BLOCK_PRIVATE_TARGETS=false`，重启服务。
-- **想换域名**：重新运行 `install.sh --domain 新域名`。
+- **想换域名**：重新运行 `install.sh -d 新域名`。
 - **速度不理想**：优先排查客户端到本机的线路质量，以及 Emby 控制台是否将会话判定为转码。
 
 ## 致谢
