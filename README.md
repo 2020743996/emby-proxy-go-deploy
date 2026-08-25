@@ -16,9 +16,11 @@
 
 ## 环境要求
 
-- Debian 11/12 或 Ubuntu 20.04+（其他发行版需自行确认依赖）
-- root 权限
+- 支持 **Debian/Ubuntu (apt)** 与 **RHEL 系：CentOS / Rocky / Alma / Alibaba Cloud Linux 等 (dnf/yum)**
+- 架构支持 x86_64 与 ARM64（其余架构需自行准备 Go 工具链）
+- 需要 systemd；root 权限运行
 - （可选）一个已解析到本机的域名，用于 HTTPS
+- 脚本会自动检测并安装缺失的 git/curl/tar/nginx/certbot
 
 ## 一键安装
 

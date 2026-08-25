@@ -71,24 +71,64 @@ echo -e "${C_B}==============================================${C_N}"
 echo -e "${C_B}   emby-reverse-proxy-go 一键安装${C_N}"
 echo -e "${C_B}==============================================${C_N}"
 
-# ---------- 1/7 系统依赖 ----------
-echo "== 1/7 安装系统依赖 =="
-if command -v apt-get >/dev/null; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq >/dev/null 2>&1 || true
-    PKGS="nginx curl tar git ca-certificates"
-    apt-get install -y -qq $PKGS >/dev/null
-    ok "依赖已就绪(nginx/curl/git)"
-else
-    warn "未检测到 apt-get，请自行确认 nginx/curl/git 已安装"
+# ---------- 1/7 检测环境并安装系统依赖 ----------
+echo "== 1/7 检测环境并安装系统依赖 =="
+PKG_MGR=""
+if command -v apt-get >/dev/null 2>&1; then PKG_MGR="apt";
+elif command -v dnf >/dev/null 2>&1; then PKG_MGR="dnf";
+elif command -v yum >/dev/null 2>&1; then PKG_MGR="yum";
 fi
+
+pkg_install() {
+    case "$PKG_MGR" in
+        apt) export DEBIAN_FRONTEND=noninteractive
+             apt-get update -qq >/dev/null 2>&1 || true
+             apt-get install -y -qq "$@" >/dev/null ;;
+        dnf) dnf install -y -q "$@" >/dev/null ;;
+        yum) yum install -y -q "$@" >/dev/null ;;
+    esac
+}
+
+ensure_cmds() {
+    local miss="" c still=""
+    for c in "$@"; do
+        command -v "$c" >/dev/null 2>&1 || miss="$miss $c"
+    done
+    miss="${miss# }"
+    [ -z "$miss" ] && return 0
+    echo "缺少依赖:$miss ，尝试通过 $PKG_MGR 安装..."
+    case "$PKG_MGR" in
+        apt) pkg_install $miss ;;
+        dnf|yum)
+            pkg_install epel-release >/dev/null 2>&1 || true
+            pkg_install $miss || true
+            ;;
+        *)   err "未识别的包管理器(支持 apt/dnf/yum)，请手动安装:$miss 后重新运行"; return 1 ;;
+    esac
+    for c in $miss; do
+        command -v "$c" >/dev/null 2>&1 || still="$still $c"
+    done
+    if [ -n "$still" ]; then
+        err "以下依赖未能自动安装:${still} —— 请手动安装后重新运行本脚本"
+        return 1
+    fi
+}
+
+ensure_cmds git curl tar nginx || exit 1
+ok "环境检测通过(PKG: ${PKG_MGR:-手动}, git/curl/tar/nginx 就绪)"
+
 
 # ---------- 2/7 Go 工具链 ----------
 echo "== 2/7 检查 Go 工具链 (需 >= 1.24) =="
 go_ok() { /usr/local/go/bin/go version 2>/dev/null | grep -qE "go1\.(2[4-9]|[3-9][0-9])\."; }
 if ! go_ok; then
-    GO_TGZ=$(curl -fsSL "$GO_MIRROR/" | grep -oE 'go1\.24\.[0-9]+\.linux-amd64\.tar\.gz' | sort -V | tail -1 || true)
-    [ -z "$GO_TGZ" ] && GO_TGZ="${GO_FALLBACK_VER}.linux-amd64.tar.gz"
+    case "$(uname -m)" in
+        x86_64)        GO_ARCH="amd64" ;;
+        aarch64|arm64) GO_ARCH="arm64" ;;
+        *) err "不支持的 CPU 架构: $(uname -m)"; exit 1 ;;
+    esac
+    GO_TGZ=$(curl -fsSL "$GO_MIRROR/" | grep -oE "go1\.24\.[0-9]+\.linux-${GO_ARCH}\.tar\.gz" | sort -V | tail -1 || true)
+    [ -z "$GO_TGZ" ] && GO_TGZ="${GO_FALLBACK_VER}.linux-${GO_ARCH}.tar.gz"
     BASE_URL="$GO_MIRROR"
     if ! curl -fsIL -m 10 "$BASE_URL/$GO_TGZ" >/dev/null; then
         BASE_URL="https://go.dev/dl"
@@ -165,9 +205,13 @@ if [ -n "$DOMAIN" ]; then
 fi
 
 if [ -n "$DOMAIN" ]; then
-    if ! command -v certbot >/dev/null; then
-        apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+    if ! command -v certbot >/dev/null 2>&1; then
+        echo "安装 certbot..."
+        ensure_cmds certbot || { err "certbot 安装失败，无法自动申请证书"; confirm "回退为纯 HTTP 模式继续安装?" || exit 1; DOMAIN=""; }
     fi
+fi
+
+if [ -n "$DOMAIN" ]; then
     CERT_EMAIL="${EMAIL:-admin@$DOMAIN}"
     if certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos \
          --keep-until-expiring --no-eff-email -m "$CERT_EMAIL"; then
