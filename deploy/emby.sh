@@ -181,6 +181,9 @@ do_uninstall() {
     systemctl disable --now "$SERVICE" 2>/dev/null
     rm -f /etc/systemd/system/emby-proxy.service
     rm -f /etc/nginx/sites-enabled/emby-proxy /etc/nginx/sites-enabled/default
+    # 若有安装前的 nginx 默认站点备份, 恢复它
+    [ -f /etc/nginx/sites-available/default.bak.emby-install ] && \
+        ln -sf /etc/nginx/sites-available/default.bak.emby-install /etc/nginx/sites-enabled/default
     cp -a "$BASE_DIR" "$BASE_DIR.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null
     systemctl daemon-reload && systemctl reload-or-restart nginx
     msg_ok "已卸载，备份目录见 $BASE_DIR.bak.*"

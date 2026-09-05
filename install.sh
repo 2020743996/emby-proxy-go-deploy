@@ -136,7 +136,6 @@ USE_HTTPS=0; TPL="nginx-http.conf.template"; ENTRANCE=""
 if [ -n "$DOMAIN" ]; then
     echo -e "${C_B}== 域名 $DOMAIN : 校验DNS -> 申请证书 ==${C_N}"
     MINE=$(pub_ips); RES=$(getent hosts "$DOMAIN" | awk '{print $1}' | sort -u)
-    if [ -z "${MINE// /}" ]; then MINE=$(hostname -I); fi
     MATCH=$(comm -12 <(echo "$MINE" | tr ' ' '\n' | sort) <(echo "$RES") | head -1)
     if [ -n "$MATCH" ]; then
         ok "DNS 已解析到本机 ($MATCH)"
@@ -148,9 +147,20 @@ if [ -n "$DOMAIN" ]; then
     fi
     if [ -n "$DOMAIN" ]; then
         install_pkg certbot
-        certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos --keep-until-expiring \
-               --no-eff-email -m "${EMAIL:-admin@$DOMAIN}" \
-            || { err "证书申请失败(检查 DNS 与 80 端口放行)"; ask "回退纯 HTTP 继续?" || exit 1; DOMAIN=""; }
+        # nginx 插件可能不随主包安装(Debian: python3-certbot-nginx)，缺失则补装
+        certbot plugins 2>/dev/null | grep -qE '^\s*\*?\s*nginx' || install_pkg python3-certbot-nginx || true
+        WROOT=/var/www/html; [ -d /var/www/html ] || WROOT=/usr/share/nginx/html
+        if certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos \
+               --keep-until-expiring --no-eff-email -m "${EMAIL:-admin@$DOMAIN}"; then
+            ok "证书就绪"
+        elif certbot certonly --webroot -w "$WROOT" -d "$DOMAIN" --non-interactive --agree-tos \
+               --keep-until-expiring --no-eff-email -m "${EMAIL:-admin@$DOMAIN}"; then
+            ok "证书就绪 (webroot)"
+        else
+            err "证书申请失败(检查 DNS 与 80 端口放行)"
+            ask "回退纯 HTTP 继续?" || exit 1
+            DOMAIN=""
+        fi
         mkdir -p /etc/letsencrypt/renewal-hooks/deploy
         printf '#!/bin/bash\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
         chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
@@ -160,7 +170,6 @@ fi
 
 echo -e "${C_B}== 配置 nginx 入口并安装管理脚本 ==${C_N}"
 systemctl enable --now nginx >/dev/null 2>&1 || true
-systemctl restart nginx >/dev/null 2>&1 || true
 [ -f /etc/nginx/sites-available/default ] && [ ! -f /etc/nginx/sites-available/default.bak.emby-install ] \
     && cp -a /etc/nginx/sites-available/default /etc/nginx/sites-available/default.bak.emby-install \
     && warn "原默认站点已备份为 default.bak.emby-install"
@@ -169,8 +178,8 @@ if [ -n "$DOMAIN" ]; then
         "$SCRIPT_DIR/deploy/$TPL" > /tmp/emby-proxy.nginx.conf
 else
     sed "s/__BACKEND_PORT__/$BACKEND_PORT/g" "$SCRIPT_DIR/deploy/$TPL" > /tmp/emby-proxy.nginx.conf
-    ENTRANCE="http://$(pub_ips | grep -v ':' | awk '{print $1}')" || true
-    [ -z "$ENTRANCE" ] && ENTRANCE="http://SERVER_IP"
+    ENTRANCE="http://$(pub_ips | grep -v ':' | awk '{print $1}')"
+    [ "$ENTRANCE" = "http://" ] && ENTRANCE="http://SERVER_IP"
 fi
 cp /tmp/emby-proxy.nginx.conf /etc/nginx/sites-available/emby-proxy; rm -f /tmp/emby-proxy.nginx.conf
 rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/emby-proxy /etc/nginx/conf.d/ws-map.conf

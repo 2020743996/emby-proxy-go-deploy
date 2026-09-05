@@ -71,7 +71,7 @@ Emby 客户端里把"服务器地址"填成上面的入口 URL 即可。注意�
 emby            # 交互菜单
 emby status     # 服务状态 + 本机/对外健康检查
 emby logs       # 最近100行日志
-emby update     # git pull + 重新编译 + 重启
+emby update     # 拉取最新源码(自动走国内镜像) + 编译 + 重启
 emby cert       # 证书状态 + 续期演练
 emby usage      # 使用说明
 ```
@@ -97,6 +97,7 @@ sudo bash uninstall.sh   # 卸载(保留证书, 程序与配置自动备份)
 
 ## FAQ
 
+- **服务器连不上 GitHub**：安装与 `emby update` 会自动尝试国内加速镜像（ghfast.top / gh-proxy.com），无需科学上网；全部失败时可手动下载源码解压到 `/opt/emby-reverse-proxy-go/src` 后重跑。
 - **证书申请失败**：检查域名解析是否指向本机、安全组是否放行 80；修好后重跑 `install.sh` 即可（幂等，可反复执行）。
 - **上游是内网 Emby**：编辑 `/opt/emby-reverse-proxy-go/emby-proxy.env` 把 `BLOCK_PRIVATE_TARGETS=false`，重启服务。
 - **想换域名**：重新运行 `install.sh -d 新域名`。

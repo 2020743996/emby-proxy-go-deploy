@@ -12,6 +12,9 @@ systemctl disable --now emby-proxy 2>/dev/null || true
 rm -f /etc/systemd/system/emby-proxy.service
 rm -f /etc/nginx/sites-enabled/emby-proxy
 rm -f /usr/local/bin/emby
+# 恢复安装前备份的 nginx 默认站点(如有)
+[ -f /etc/nginx/sites-available/default.bak.emby-install ] && \
+    ln -sf /etc/nginx/sites-available/default.bak.emby-install /etc/nginx/sites-enabled/default
 systemctl daemon-reload
 systemctl reload-or-restart nginx 2>/dev/null || true
 
