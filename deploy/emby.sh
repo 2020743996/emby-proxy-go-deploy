@@ -56,9 +56,14 @@ svc_status() {
     else
         msg_err "nginx 未运行，对外入口不可用"
     fi
+    if command -v certbot >/dev/null 2>&1; then
+        local exp
+        exp=$(certbot certificates 2>/dev/null | grep "Expiry Date" | head -1 | awk -F': ' '{print $2}')
+        [ -n "$exp" ] && echo -e " 证书到期 : $exp"
+    fi
 }
 
-svc_logs() { journalctl -u "$SERVICE" -n 100 --no-pager; }
+svc_logs() { journalctl -u "$SERVICE" -n "${1:-100}" --no-pager; }
 svc_tailf() { echo "实时日志中，按 Ctrl+C 返回..."; journalctl -u "$SERVICE" -f --no-pager; }
 
 edit_config() {
@@ -286,7 +291,7 @@ case "$1" in
     stop)     svc_stop ;;
     restart)  svc_restart ;;
     status)   svc_status ;;
-    logs)     svc_logs ;;
+    logs)     svc_logs "${2:-100}" ;;
     tailf)    svc_tailf ;;
     config)   show_config ;;
     test)     test_upstream ;;
